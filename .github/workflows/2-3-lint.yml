@@ -49,7 +49,7 @@ jobs:
         continue-on-error: true
         run: |
           # Check for ESLint configs in packages using find command
-          if find packages -name ".eslintrc*" | grep -q .; then
+          if find packages -name ".eslint.config*" | grep -q .; then
             echo "ESLint config found in packages!"
           else
             echo "No ESLint config found in packages!" && exit 1
