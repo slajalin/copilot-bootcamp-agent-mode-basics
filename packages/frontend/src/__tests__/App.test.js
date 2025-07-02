@@ -52,8 +52,8 @@ describe('App Component', () => {
   test('loads and displays items', async () => {
     render(<App />);
 
-    // Initially shows loading state
-    expect(screen.getByText('Loading data...')).toBeInTheDocument();
+    // Initially shows loading state (MUI CircularProgress)
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
 
     // Wait for items to load
     await waitFor(() => {
@@ -67,9 +67,9 @@ describe('App Component', () => {
 
     render(<App />);
 
-    // Wait for items to load
+    // Wait for items to load (no more loading spinner)
     await waitFor(() => {
-      expect(screen.queryByText('Loading data...')).not.toBeInTheDocument();
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     // Fill in the form and submit
