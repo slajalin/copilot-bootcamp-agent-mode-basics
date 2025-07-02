@@ -58,22 +58,32 @@ button:hover {
   background-color: #21a1c9;
 }
 
-ul {
-  list-style-type: none;
-  padding: 0;
+/* Table styles */
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 15px;
 }
 
-li {
-  padding: 10px;
-  border-bottom: 1px solid #ddd;
+.items-table th,
+.items-table td {
+  padding: 12px;
   text-align: left;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  border-bottom: 1px solid #ddd;
 }
 
-li span {
-  flex: 1;
+.items-table th {
+  background-color: #f8f9fa;
+  font-weight: bold;
+  color: #495057;
+}
+
+.items-table tr:hover {
+  background-color: #f8f9fa;
+}
+
+.items-table td:last-child {
+  text-align: center;
 }
 
 .delete-btn {
