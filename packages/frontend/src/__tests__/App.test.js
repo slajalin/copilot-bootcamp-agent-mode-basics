@@ -467,7 +467,7 @@ describe('App Initial Rendering and Data Fetching', () => {
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
-  it('should fetch and display items on initial load', async () => {
+  it('should fetch and load items on initially', async () => {
     render(<App />);
     
     await waitFor(() => {
