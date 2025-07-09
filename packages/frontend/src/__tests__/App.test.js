@@ -278,6 +278,43 @@ describe('App Delete Functionality', () => {
       expect(screen.getByText('Test Item 1')).toBeInTheDocument();
     });
 
+    it('should handle 403 error when item is too new to delete', async () => {
+      // Mock 403 error for items less than 5 days old
+      server.use(
+        rest.delete('/api/items/:id', (req, res, ctx) => {
+          return res(ctx.status(403), ctx.json({ 
+            error: 'Item cannot be deleted. Items must be at least 5 days old to be deleted.',
+            createdAt: '2023-01-01T00:00:00Z',
+            canDeleteAfter: '2023-01-06T00:00:00Z'
+          }));
+        })
+      );
+
+      const deleteButton = screen.getByLabelText('Delete Test Item 1');
+      
+      fireEvent.click(deleteButton);
+      
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+      
+      const confirmButton = screen.getByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+      
+      // Wait for error message to appear
+      await waitFor(() => {
+        expect(screen.getByText(/Error deleting item/)).toBeInTheDocument();
+      });
+      
+      // Verify item is still in the list
+      expect(screen.getByText('Test Item 1')).toBeInTheDocument();
+      
+      // Verify dialog is closed
+      await waitFor(() => {
+        expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+      });
+    });
+
     it('should not allow multiple delete operations on the same item', async () => {
       // Mock a slow delete response
       server.use(

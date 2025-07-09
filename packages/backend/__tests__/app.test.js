@@ -1,20 +1,44 @@
 const request = require('supertest');
 const { app, db } = require('../src/app');
 
+/**
+ * Helper function to insert test items with specific timestamps
+ */
+function insertTestItemsWithAge(daysOld = 6) {
+  const oldDate = new Date();
+  oldDate.setDate(oldDate.getDate() - daysOld);
+  const timestamp = oldDate.toISOString();
+  
+  // Clear the database
+  db.exec('DELETE FROM items');
+  
+  // Insert initial test data with old timestamps
+  const initialItems = ['Item 1', 'Item 2', 'Item 3'];
+  const insertStmt = db.prepare('INSERT INTO items (name, created_at) VALUES (?, ?)');
+  
+  initialItems.forEach(item => {
+    insertStmt.run(item, timestamp);
+  });
+}
+
+/**
+ * Helper function to insert a single item with specific age
+ */
+function insertSingleItemWithAge(name, daysOld) {
+  const oldDate = new Date();
+  oldDate.setDate(oldDate.getDate() - daysOld);
+  const timestamp = oldDate.toISOString();
+  
+  const insertStmt = db.prepare('INSERT INTO items (name, created_at) VALUES (?, ?)');
+  return insertStmt.run(name, timestamp);
+}
+
 describe('Backend API Tests - DELETE /api/items/:id', () => {
   let testItemId;
 
   beforeEach(() => {
-    // Clear the database and reset with initial data before each test
-    db.exec('DELETE FROM items');
-    
-    // Insert initial test data
-    const initialItems = ['Item 1', 'Item 2', 'Item 3'];
-    const insertStmt = db.prepare('INSERT INTO items (name) VALUES (?)');
-    
-    initialItems.forEach(item => {
-      insertStmt.run(item);
-    });
+    // Insert test items that are 6 days old (can be deleted)
+    insertTestItemsWithAge(6);
 
     // Get the first item's ID for testing
     const items = db.prepare('SELECT * FROM items ORDER BY id ASC').all();
@@ -27,7 +51,7 @@ describe('Backend API Tests - DELETE /api/items/:id', () => {
   });
 
   describe('Happy Path', () => {
-    it('should delete an existing item successfully', async () => {
+    it('should delete an existing item successfully when item is 5+ days old', async () => {
       const response = await request(app)
         .delete(`/api/items/${testItemId}`)
         .expect(200);
@@ -38,7 +62,7 @@ describe('Backend API Tests - DELETE /api/items/:id', () => {
       expect(response.body.deletedItem).toHaveProperty('name', 'Item 1');
     });
 
-    it('should remove the item from the database', async () => {
+    it('should remove the item from the database when item is old enough', async () => {
       // Verify item exists before deletion
       const itemsBefore = db.prepare('SELECT * FROM items').all();
       expect(itemsBefore).toHaveLength(3);
@@ -95,6 +119,45 @@ describe('Backend API Tests - DELETE /api/items/:id', () => {
   });
 
   describe('Unhappy Path', () => {
+    it('should return 403 for items less than 5 days old', async () => {
+      // Insert a new item that's only 3 days old
+      const result = insertSingleItemWithAge('New Item', 3);
+      const newItemId = result.lastInsertRowid;
+
+      const response = await request(app)
+        .delete(`/api/items/${newItemId}`)
+        .expect(403);
+
+      expect(response.body).toHaveProperty('error', 'Item cannot be deleted. Items must be at least 5 days old to be deleted.');
+      expect(response.body).toHaveProperty('createdAt');
+      expect(response.body).toHaveProperty('canDeleteAfter');
+    });
+
+    it('should return 403 for items exactly 4 days old', async () => {
+      // Insert a new item that's exactly 4 days old (should not be deletable)
+      const result = insertSingleItemWithAge('4 Day Old Item', 4);
+      const newItemId = result.lastInsertRowid;
+
+      const response = await request(app)
+        .delete(`/api/items/${newItemId}`)
+        .expect(403);
+
+      expect(response.body).toHaveProperty('error', 'Item cannot be deleted. Items must be at least 5 days old to be deleted.');
+    });
+
+    it('should allow deletion of items exactly 5 days old', async () => {
+      // Insert a new item that's exactly 5 days old (should be deletable)
+      const result = insertSingleItemWithAge('5 Day Old Item', 5);
+      const newItemId = result.lastInsertRowid;
+
+      const response = await request(app)
+        .delete(`/api/items/${newItemId}`)
+        .expect(200);
+
+      expect(response.body).toHaveProperty('message', 'Item deleted successfully');
+      expect(response.body.deletedItem).toHaveProperty('name', '5 Day Old Item');
+    });
+
     it('should return 404 for non-existent item ID', async () => {
       const nonExistentId = 99999;
 
@@ -235,14 +298,10 @@ describe('Backend API Tests - DELETE /api/items/:id', () => {
   });
 
   describe('Integration Tests', () => {
-    it('should work correctly with create and read operations', async () => {
-      // Create a new item
-      const createResponse = await request(app)
-        .post('/api/items')
-        .send({ name: 'Test Item for Deletion' })
-        .expect(201);
-
-      const newItemId = createResponse.body.id;
+    it('should work correctly with create and read operations for old items', async () => {
+      // Create a new item with old timestamp (6 days ago)
+      const result = insertSingleItemWithAge('Test Item for Deletion', 6);
+      const newItemId = result.lastInsertRowid;
 
       // Verify item exists
       const getResponse = await request(app)
@@ -251,7 +310,7 @@ describe('Backend API Tests - DELETE /api/items/:id', () => {
 
       expect(getResponse.body).toHaveLength(4); // 3 initial + 1 new
 
-      // Delete the item
+      // Delete the item (should work since it's old enough)
       await request(app)
         .delete(`/api/items/${newItemId}`)
         .expect(200);
@@ -265,10 +324,34 @@ describe('Backend API Tests - DELETE /api/items/:id', () => {
       expect(getFinalResponse.body.find(item => item.id === newItemId)).toBeUndefined();
     });
 
-    it('should handle multiple deletions in sequence', async () => {
+    it('should reject deletion of newly created items', async () => {
+      // Create a new item with current timestamp (should not be deletable)
+      const createResponse = await request(app)
+        .post('/api/items')
+        .send({ name: 'New Item Not Deletable' })
+        .expect(201);
+
+      const newItemId = createResponse.body.id;
+
+      // Try to delete the newly created item (should fail)
+      const deleteResponse = await request(app)
+        .delete(`/api/items/${newItemId}`)
+        .expect(403);
+
+      expect(deleteResponse.body).toHaveProperty('error', 'Item cannot be deleted. Items must be at least 5 days old to be deleted.');
+
+      // Verify item still exists
+      const getResponse = await request(app)
+        .get('/api/items')
+        .expect(200);
+
+      expect(getResponse.body.find(item => item.id === newItemId)).toBeDefined();
+    });
+
+    it('should handle multiple deletions in sequence for old items', async () => {
       const items = db.prepare('SELECT * FROM items ORDER BY id ASC').all();
       
-      // Delete items one by one
+      // Delete items one by one (all should be old enough)
       for (const item of items) {
         const response = await request(app)
           .delete(`/api/items/${item.id}`)
