@@ -1298,3 +1298,396 @@ describe('App Edge Cases and Uncovered Lines', () => {
     expect(screen.queryByText('Error adding item')).not.toBeInTheDocument();
   });
 });
+
+describe('Delete Item Integration Tests', () => {
+  // Integration-specific mock data
+  const integrationMockItems = [
+    { id: 101, name: 'Integration Item 1', created_at: '2023-01-01T00:00:00Z' },
+    { id: 102, name: 'Integration Item 2', created_at: '2023-01-02T00:00:00Z' },
+    { id: 103, name: 'Integration Item 3', created_at: '2023-01-03T00:00:00Z' },
+    { id: 104, name: 'Integration Item 4', created_at: '2023-01-04T00:00:00Z' },
+  ];
+
+  // Track deleted items for integration scenarios
+  let deletedItems = [];
+
+  beforeEach(() => {
+    deletedItems = [];
+    
+    // Setup handlers for integration tests
+    server.use(
+      rest.get('/api/items', (req, res, ctx) => {
+        const remainingItems = integrationMockItems.filter(item => 
+          !deletedItems.includes(item.id)
+        );
+        return res(ctx.json(remainingItems));
+      }),
+      rest.delete('/api/items/:id', (req, res, ctx) => {
+        const itemId = parseInt(req.params.id);
+        deletedItems.push(itemId);
+        return res(ctx.status(200));
+      })
+    );
+  });
+
+  describe('Full Delete Flow Integration', () => {
+    it('should complete entire delete flow from button click to item removal', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Verify initial state - all 4 items present
+      expect(screen.getAllByRole('row')).toHaveLength(5); // 4 data rows + 1 header
+      
+      // Click delete button for first item
+      const deleteButton = screen.getByLabelText('Delete Integration Item 1');
+      fireEvent.click(deleteButton);
+      
+      // Verify confirmation dialog appears
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+        expect(screen.getByText(/Are you sure you want to delete "Integration Item 1"/)).toBeInTheDocument();
+      });
+      
+      // Confirm deletion
+      const confirmButton = screen.getByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+      
+      // Verify item is removed from UI
+      await waitFor(() => {
+        expect(screen.queryByText('Integration Item 1')).not.toBeInTheDocument();
+      });
+      
+      // Wait for dialog to close
+      await waitFor(() => {
+        expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+      }, { timeout: 2000 });
+      
+      // Verify remaining items are still present
+      expect(screen.getByText('Integration Item 2')).toBeInTheDocument();
+      expect(screen.getByText('Integration Item 3')).toBeInTheDocument();
+      expect(screen.getByText('Integration Item 4')).toBeInTheDocument();
+      
+      // Verify row count is updated
+      expect(screen.getAllByRole('row')).toHaveLength(4); // 3 data rows + 1 header
+    });
+
+    it('should handle sequential deletion of multiple items', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Delete items in sequence
+      const itemsToDelete = ['Integration Item 1', 'Integration Item 3'];
+      
+      for (const itemName of itemsToDelete) {
+        // Click delete button
+        const deleteButton = screen.getByLabelText(`Delete ${itemName}`);
+        fireEvent.click(deleteButton);
+        
+        // Wait for confirmation dialog
+        await waitFor(() => {
+          expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+        });
+        
+        // Confirm deletion
+        const confirmButton = screen.getByRole('button', { name: 'Delete' });
+        fireEvent.click(confirmButton);
+        
+        // Wait for item to be removed
+        await waitFor(() => {
+          expect(screen.queryByText(itemName)).not.toBeInTheDocument();
+        });
+        
+        // Ensure dialog is closed before next iteration
+        await waitFor(() => {
+          expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+        });
+      }
+      
+      // Verify final state - only 2 items remain
+      expect(screen.getByText('Integration Item 2')).toBeInTheDocument();
+      expect(screen.getByText('Integration Item 4')).toBeInTheDocument();
+      expect(screen.getAllByRole('row')).toHaveLength(3); // 2 data rows + 1 header
+    });
+
+    it('should handle deletion cancellation and maintain state', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Click delete button
+      const deleteButton = screen.getByLabelText('Delete Integration Item 1');
+      fireEvent.click(deleteButton);
+      
+      // Wait for confirmation dialog
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+      
+      // Cancel deletion
+      const cancelButton = screen.getByRole('button', { name: 'Cancel' });
+      fireEvent.click(cancelButton);
+      
+      // Verify dialog is closed
+      await waitFor(() => {
+        expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+      });
+      
+      // Verify all items are still present
+      expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      expect(screen.getByText('Integration Item 2')).toBeInTheDocument();
+      expect(screen.getByText('Integration Item 3')).toBeInTheDocument();
+      expect(screen.getByText('Integration Item 4')).toBeInTheDocument();
+      
+      // Verify row count unchanged
+      expect(screen.getAllByRole('row')).toHaveLength(5); // 4 data rows + 1 header
+    });
+  });
+
+  describe('Error Handling Integration', () => {
+    it('should handle deletion error and maintain UI state', async () => {
+      // Override delete handler to simulate error
+      server.use(
+        rest.delete('/api/items/:id', (req, res, ctx) => {
+          return res(ctx.status(500), ctx.json({ error: 'Database error' }));
+        })
+      );
+      
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Attempt to delete item
+      const deleteButton = screen.getByLabelText('Delete Integration Item 1');
+      fireEvent.click(deleteButton);
+      
+      // Wait for confirmation dialog
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+      
+      // Confirm deletion
+      const confirmButton = screen.getByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+      
+      // Wait for error message
+      await waitFor(() => {
+        expect(screen.getByText(/Error deleting item/)).toBeInTheDocument();
+      });
+      
+      // Wait for dialog to close
+      await waitFor(() => {
+        expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+      }, { timeout: 2000 });
+      
+      // Verify item is still present (deletion failed)
+      expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      
+      // Verify all items are still present
+      expect(screen.getAllByRole('row')).toHaveLength(5); // 4 data rows + 1 header
+    });
+
+    it('should handle network error during deletion', async () => {
+      // Override delete handler to simulate network error
+      server.use(
+        rest.delete('/api/items/:id', (req, res, ctx) => {
+          return res.networkError('Network connection failed');
+        })
+      );
+      
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Attempt to delete item
+      const deleteButton = screen.getByLabelText('Delete Integration Item 1');
+      fireEvent.click(deleteButton);
+      
+      // Wait for confirmation dialog
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+      
+      // Confirm deletion
+      const confirmButton = screen.getByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+      
+      // Wait for error message
+      await waitFor(() => {
+        expect(screen.getByText(/Error deleting item/)).toBeInTheDocument();
+      });
+      
+      // Verify item is still present (deletion failed)
+      expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+    });
+  });
+
+  describe('State Management Integration', () => {
+    it('should maintain correct item order after deletion', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Delete the second item
+      const deleteButton = screen.getByLabelText('Delete Integration Item 2');
+      fireEvent.click(deleteButton);
+      
+      // Wait for confirmation dialog
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+      
+      // Confirm deletion
+      const confirmButton = screen.getByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+      
+      // Wait for item to be removed
+      await waitFor(() => {
+        expect(screen.queryByText('Integration Item 2')).not.toBeInTheDocument();
+      });
+      
+      // Wait for dialog to close
+      await waitFor(() => {
+        expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+      }, { timeout: 2000 });
+      
+      // Verify remaining items are in correct order (based on how API returns them)
+      const rows = screen.getAllByRole('row');
+      // After deleting item 2, items 1, 3, 4 should remain in the order they appear in the filtered array
+      expect(rows[1]).toHaveTextContent('101');
+      expect(rows[1]).toHaveTextContent('Integration Item 1');
+      expect(rows[2]).toHaveTextContent('103');
+      expect(rows[2]).toHaveTextContent('Integration Item 3');
+      expect(rows[3]).toHaveTextContent('104');
+      expect(rows[3]).toHaveTextContent('Integration Item 4');
+    });
+
+    it('should handle deletion of all items and show empty state', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Delete all items
+      const itemNames = [
+        'Integration Item 1',
+        'Integration Item 2', 
+        'Integration Item 3',
+        'Integration Item 4'
+      ];
+      
+      for (const itemName of itemNames) {
+        const deleteButton = screen.getByLabelText(`Delete ${itemName}`);
+        fireEvent.click(deleteButton);
+        
+        await waitFor(() => {
+          expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+        });
+        
+        const confirmButton = screen.getByRole('button', { name: 'Delete' });
+        fireEvent.click(confirmButton);
+        
+        await waitFor(() => {
+          expect(screen.queryByText(itemName)).not.toBeInTheDocument();
+        });
+        
+        // Wait for dialog to close before proceeding
+        await waitFor(() => {
+          expect(screen.queryByText('Confirm Delete')).not.toBeInTheDocument();
+        }, { timeout: 2000 });
+      }
+      
+      // Verify empty state is shown
+      await waitFor(() => {
+        expect(screen.getByText('No items found. Add some items to get started!')).toBeInTheDocument();
+      });
+      
+      // Verify header row plus empty message row
+      expect(screen.getAllByRole('row')).toHaveLength(2);
+    });
+  });
+
+  describe('UI Interaction Integration', () => {
+    it('should handle rapid delete button clicks gracefully', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Click delete button multiple times rapidly
+      const deleteButton = screen.getByLabelText('Delete Integration Item 1');
+      fireEvent.click(deleteButton);
+      fireEvent.click(deleteButton);
+      fireEvent.click(deleteButton);
+      
+      // Should only open one dialog
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+      });
+      
+      // Verify only one dialog is present
+      const dialogs = screen.getAllByRole('dialog');
+      expect(dialogs).toHaveLength(1);
+    });
+
+    it('should handle switching between different item deletions', async () => {
+      render(<App />);
+      
+      // Wait for initial data load
+      await waitFor(() => {
+        expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+      });
+      
+      // Click delete for first item
+      const deleteButton1 = screen.getByLabelText('Delete Integration Item 1');
+      fireEvent.click(deleteButton1);
+      
+      await waitFor(() => {
+        expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+        expect(screen.getByText(/Are you sure you want to delete "Integration Item 1"/)).toBeInTheDocument();
+      });
+      
+      // Click delete for second item (should switch dialog content)
+      const deleteButton2 = screen.getByLabelText('Delete Integration Item 2');
+      fireEvent.click(deleteButton2);
+      
+      await waitFor(() => {
+        expect(screen.getByText(/Are you sure you want to delete "Integration Item 2"/)).toBeInTheDocument();
+      });
+      
+      // Confirm deletion (should delete item 2)
+      const confirmButton = screen.getByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+      
+      await waitFor(() => {
+        expect(screen.queryByText('Integration Item 2')).not.toBeInTheDocument();
+      });
+      
+      // Verify item 1 is still present
+      expect(screen.getByText('Integration Item 1')).toBeInTheDocument();
+    });
+  });
+});
